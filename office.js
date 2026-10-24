@@ -15,7 +15,7 @@
   // window.__breakScale (default 1) shortens both for testing.
   const BREAK_EVERY = [60, 180];
   const BREAK_STAY = [10, 25];
-  const BREAK_SPOTS = { coffee: 3, water: 3, fridge: 1.5, sink: 0.8, vending: 1.5, whiteboard: 2.5, printer: 2, pickleball: 2.5, bench: 0.8,
+  const BREAK_SPOTS = { coffee: 3, water: 3, fridge: 1.5, sink: 0.8, vending: 1.5, whiteboard: 2.5, printer: 2, bench: 0.8,
     window: 2, read: 1.2, phone: 1.2, stool: 1.2, meeting: 1, plant: 0.8, chat: 2.5 };
   // Fixed seats (desk index in the plan; pod 0 = 0 n / 1 s across the divider
   // from it / 2 n beside 0 / 3 across from 2). The two traders sit face to face.
@@ -50,6 +50,10 @@
   }
   const pick = (arr, h, salt) => arr[(Math.imul(h ^ Math.imul(salt, 2654435761), 2246822519) >>> 0) % arr.length];
   const rand = (a, b) => a + Math.random() * (b - a);
+  const lerp = (a, b, f) => a + (b - a) * f;
+  const ease = (f) => f * f * (3 - 2 * f);
+  const hash01 = (n) => (hash('r' + n) % 10007) / 10007;
+  const TRADER_COLORS = { '交易員-1': '#00f0ff', '交易員-2': '#ff2bd6' };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   function palette() {
@@ -212,7 +216,7 @@
       this.ro.observe(root);
       this.canvas.addEventListener('mousemove', (e) => this.pointer(e));
       this.canvas.addEventListener('click', (e) => this.pointer(e, true));
-      this.canvas.addEventListener('mouseleave', () => { this.hoverKey = null; this.onHover(null); });
+      this.canvas.addEventListener('mouseleave', () => { this.hoverKey = null; this.tvHover = false; this.onHover(null); });
       this.resize();
       this.last = performance.now();
       // Resolves true once a few frames have been drawn with data in place,
@@ -314,9 +318,14 @@
       add(tx + 1.3 + ty + 0.7, () => this.pingpong(tx, ty));
       prop('pingpong', { x: tx, y: ty });
       solid(tx, ty, 2.6, 1.4, 0.05);
-      poi(tx - 0.55, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
-      poi(tx + 3.15, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
+      poi(tx - 0.55, ty + 0.7, 'pingpong', 'side', { pair: 'pp', side: 'L', venue: 'pp' });
+      poi(tx + 3.15, ty + 0.7, 'pingpong', 'side', { pair: 'pp', side: 'R', venue: 'pp' });
       const pp = { x0: tx - 0.2, x1: tx + 2.8, y: ty + 0.7 };
+      const venues = [];
+      // Rally geometry: hit points at the table ends, bounce on the far half of the table.
+      venues.push({ id: 'pp', kind: 'pingpong', pois: pois.slice(-2), px: [tx - 0.55, tx + 3.15],
+        xA: tx - 0.15, xB: tx + 2.75, hz: 0.95, bz: 0.77, bf: 0.74, h1: 0.22, h2: 0.25, T: 0.8,
+        y0: ty + 0.3, y1: ty + 1.1, surf: { x0: tx, x1: tx + 2.6, y0: ty, y1: ty + 1.4, z: 0.77 } });
 
       // ---- front corner: vending machines, foosball, phone booth
       const fy = OD + 3.7;
@@ -449,10 +458,10 @@
         const y1 = Math.min(ck.y1 + 0.25, y + 0.5);
         add(ck.xm + y1 + 0.02, () => this.pickleNet(ck, y, y1));
       }
-      for (const [side, sx] of [['L', ck.x0 + 1.0], ['R', ck.x1 - 1.0]]) {
-        poi(sx, ck.ym - 0.9, 'pickleball', 'side', { pair: 'pk', side });
-        poi(sx, ck.ym + 0.9, 'pickleball', 'side', { pair: 'pk', side });
-      }
+      for (const [side, sx] of [['L', ck.x0 + 0.9], ['R', ck.x1 - 0.9]]) poi(sx, ck.ym, 'pickleball', 'side', { pair: 'pk', side, venue: 'pk' });
+      venues.push({ id: 'pk', kind: 'pickleball', pois: pois.slice(-2), px: [ck.x0 + 0.9, ck.x1 - 0.9],
+        xA: ck.x0 + 1.2, xB: ck.x1 - 1.2, hz: 0.6, bz: 0.03, bf: 0.7, h1: 0.75, h2: 0.4, T: 1.35,
+        y0: ck.y0 + 0.6, y1: ck.y1 - 0.6, surf: null });
       const bnx = ck.xm - 1.0, bny = ck.y1 + 0.45;
       add(bnx + 1.0 + bny + 0.2, () => this.bench(bnx, bny));
       prop('bench', { x: bnx, y: bny, w: 2.0, d: 0.4 });
@@ -464,10 +473,12 @@
       }
 
       const posters = [
-        { y: 2.2, color: '#c96442', text: 'SHIP IT' },
-        { y: 4.6, color: '#10a37f', text: 'TESTS ✓' },
+        { y: 6.6, color: '#c96442', text: 'SHIP IT' },
+        { y: 7.9, color: '#10a37f', text: 'TESTS ✓' },
       ];
-      return { W, D, FD, ck, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, door: { x: 0.4, y: D - 1.2 } };
+      // Wall TV on the left wall showing the trading contest live.
+      const tv = { y0: 2.0, y1: 6.0, z0: 0.85, z1: 2.3 };
+      return { W, D, FD, ck, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, venues, tv, door: { x: 0.4, y: D - 1.2 } };
     }
 
     glassX(add, x, y, d) {
@@ -500,7 +511,7 @@
       if (working.length > cap - 1 || (cap > 8 && working.length < cap * 0.35)) {
         this.plan = this.buildPlan(working.length);
         this.deskOf.clear();
-        for (const p of this.people.values()) { p.poi = null; p.napDesk = null; p.desk = null; p.until = 0; }
+        for (const p of this.people.values()) { p.poi = null; p.napDesk = null; p.desk = null; p.until = 0; p.game = null; }
       }
 
       const workKeys = new Set(working.map((s) => s.key));
@@ -601,7 +612,7 @@
       const sleepy = p.s.status === 'idle';
       const weighted = [];
       for (const q of plan.pois) {
-        if (q.taken) continue;
+        if (q.taken || q.venue) continue; // game venues are handed out in pairs by matchmake()
         let w = 1;
         if (q.pair) w = plan.pois.some((o) => o.pair === q.pair && o !== q && o.taken) ? 7 : 1.2;
         if (q.act === 'couch' || q.act === 'beanbag') w = sleepy ? 3 : 1.4;
@@ -634,7 +645,7 @@
         return;
       }
       // mode 'break'
-      if (p.poi && p.until === Infinity) p.until = now + p.stay;
+      if (p.poi && p.until === Infinity && !p.game) p.until = now + p.stay;
       if (now >= p.until || busy || !p.poi) {
         this.release(p);
         p.mode = 'work';
@@ -648,7 +659,7 @@
       const weighted = [];
       for (const q of plan.pois) {
         const w = BREAK_SPOTS[q.act];
-        if (!w || q.taken) continue;
+        if (!w || q.taken || q.venue) continue;
         weighted.push([q, w]);
       }
       // drop by a colleague's desk for a chat
@@ -707,7 +718,11 @@
         if (mx >= h.x0 && mx <= h.x1 && my >= h.y0 && my <= h.y1) { found = h; break; }
       }
       const key = found ? found.key : null;
-      this.canvas.style.cursor = key ? 'pointer' : 'default';
+      const tv = !key && this.onTv(mx, my);
+      this.tvHover = tv;
+      if (tv && click) this.tvPinned = !this.tvPinned;
+      else if (click && this.tvPinned && !key) this.tvPinned = false;
+      this.canvas.style.cursor = key || tv ? 'pointer' : 'default';
       if (key !== this.hoverKey || click) {
         this.hoverKey = key;
         const p = key && this.people.get(key);
@@ -854,6 +869,7 @@
           c.font = '800 8px ui-sans-serif, system-ui, sans-serif'; c.fillStyle = '#fff'; c.textAlign = 'center'; c.fillText(ps.text, 0, 0);
         });
       }
+      this.drawTv();
       this.onWall('x0', 1.0, 1.85, (c) => {
         c.beginPath(); c.arc(0, 0, 11, 0, Math.PI * 2); c.fillStyle = pal.bubble; c.fill();
         c.lineWidth = 2; c.strokeStyle = pal.trim; c.stroke();
@@ -912,41 +928,8 @@
       this.box(x, y + 0.36, 0.44, 2.0, 0.05, 0.35, this.shade(wd, 15), wd, this.shade(wd, -15));
     }
 
-    // Who is playing pickleball: one player on each side is enough for a rally.
-    picklePlayers() {
-      const ck = this.plan.ck;
-      if (!ck) return null;
-      const on = this.plan.pois.filter((q) => q.pair === 'pk' && q.taken)
-        .map((q) => [q, this.people.get(q.taken)])
-        .filter(([q, p]) => p && p.poi === q && !p.path.length);
-      const L = on.find(([q]) => q.side === 'L'), R = on.find(([q]) => q.side === 'R');
-      return L && R ? [L[1], R[1]] : null;
-    }
 
-    // Ball position for the rally: arcs over the net between the two players.
-    pickleBallPos() {
-      const pl = this.picklePlayers();
-      if (!pl) return null;
-      const [a, b] = pl;
-      const k = (this.t / 1300) % 2;
-      const f = k < 1 ? k : 2 - k;
-      const x = a.x + 0.35 + f * (b.x - a.x - 0.7);
-      const y = a.y + f * (b.y - a.y);
-      const z = 0.55 + Math.sin(f * Math.PI) * 0.75;
-      return { x, y, z };
-    }
 
-    drawPickleBall() {
-      const b = this.pickleBallPos();
-      if (!b) return;
-      const c = this.ctx;
-      const sh = this.iso(b.x, b.y, 0);
-      c.fillStyle = 'rgba(0,0,0,.22)';
-      c.beginPath(); c.ellipse(sh.x, sh.y, 2.6, 1.2, 0, 0, Math.PI * 2); c.fill();
-      const p = this.iso(b.x, b.y, b.z);
-      c.fillStyle = '#e8f04a';
-      c.beginPath(); c.arc(p.x, p.y, 2.4, 0, Math.PI * 2); c.fill();
-    }
 
     // ------------------------------------------------------------ furniture
 
@@ -1333,8 +1316,6 @@
 
       let x = b.x;
       const y = b.y - bob;
-      if (st.act === 'pingpong') x += Math.sin(t * 7 + p.phase) * 4;
-      if (st.act === 'pickleball') x += Math.sin(t * 2.4 + p.phase) * 5;
       if (st.act === 'foosball') x += Math.sin(t * 5 + p.phase) * 1.5;
       const sc = s.subagent ? 0.8 : 1;
       c.save();
@@ -1396,20 +1377,21 @@
           hand(7.5, hip - 21 + k * 2);
           break;
         }
-        case 'pingpong': {
-          c.fillRect(-9, hip - 11, 3, 10);
-          c.fillRect(6, hip - 14, 3, 9);
-          c.fillStyle = '#c0392b';
-          c.beginPath(); c.arc(10, hip - 16, 4, 0, Math.PI * 2); c.fill();
-          break;
-        }
+        case 'pingpong':
         case 'pickleball': {
-          const sw = Math.sin(t * 4.8 + p.phase);
-          c.fillRect(-9, hip - 11, 3, 10);
-          c.fillRect(6, hip - 14 + sw * 2, 3, 9);
-          c.fillStyle = p.poi && p.poi.side === 'L' ? '#e0763a' : '#7a4fd0';
-          c.fillRect(8, hip - 21 + sw * 2, 5, 7);
-          c.fillStyle = '#333'; c.fillRect(9.5, hip - 15 + sw * 2, 2, 3);
+          // paddle arm swings with the rally: -1 back-swing, +1 follow-through
+          const dir = p.poi && p.poi.side === 'R' ? -1 : 1;
+          const sw = p.swing || 0;
+          const ang = -dir * (0.2 + sw * 1.1);
+          c.fillRect(-9 * dir - (dir < 0 ? 3 : 0), hip - 11, 3, 10);
+          const sx = 7.5 * dir, sy = hip - 15;
+          c.save(); c.translate(sx, sy); c.rotate(ang);
+          c.fillRect(-1.5, 0, 3, 8);
+          const pk = st.act === 'pickleball';
+          c.fillStyle = '#5a3a22'; c.fillRect(-0.8, 7, 1.6, 3);
+          c.fillStyle = pk ? (dir > 0 ? '#e0763a' : '#7a4fd0') : (dir > 0 ? '#c0392b' : '#1f2f6b');
+          c.beginPath(); c.ellipse(0, 12.5, pk ? 3.6 : 3.4, pk ? 4.4 : 3.6, 0, 0, Math.PI * 2); c.fill();
+          c.restore();
           break;
         }
         case 'foosball': {
@@ -1617,25 +1599,6 @@
       c.restore();
     }
 
-    pingPongBall() {
-      const players = this.plan.pois
-        .filter((q) => q.pair === 'pp' && q.taken)
-        .map((q) => this.people.get(q.taken))
-        .filter((p) => p && p.poi && p.poi.pair === 'pp' && !p.path.length);
-      if (players.length < 2) return;
-      const pp = this.plan.pp;
-      const k = (this.t / 900) % 2;
-      const f = k < 1 ? k : 2 - k;
-      const x = pp.x0 + 0.3 + f * (pp.x1 - pp.x0 - 0.6);
-      const z = 0.8 + Math.abs(Math.sin(f * Math.PI * 2)) * 0.45;
-      const c = this.ctx;
-      const sh = this.iso(x, pp.y, 0.77);
-      c.fillStyle = 'rgba(0,0,0,.25)';
-      c.beginPath(); c.ellipse(sh.x, sh.y, 2.5, 1.2, 0, 0, Math.PI * 2); c.fill();
-      const p = this.iso(x, pp.y, z);
-      c.fillStyle = '#fff';
-      c.beginPath(); c.arc(p.x, p.y, 2.2, 0, Math.PI * 2); c.fill();
-    }
 
     // ------------------------------------------------------------ frame
 
@@ -1653,7 +1616,7 @@
       const wall = Date.now();
       for (const [k, p] of this.people) {
         if (p.mode === 'wander') {
-          if (p.poi && !p.path.length && p.until === Infinity) p.until = wall + p.stay;
+          if (p.poi && !p.path.length && p.until === Infinity && !p.game) p.until = wall + p.stay;
           this.wander(p, wall);
         } else if (p.mode === 'work' || p.mode === 'break') {
           this.workBreaks(p, wall);
@@ -1668,7 +1631,274 @@
           this.people.delete(k);
         }
       }
+      this.matchmake(wall);
+      this.stepGames(wall);
       this.moveCat(dt, wall);
+    }
+
+    // ------------------------------------------------------------ games
+    // Free colleagues (off duty / on a break) are paired up onto the ping-pong
+    // table or the pickleball court. A venue is only ever used by two players.
+
+    freeForGame(p, now) {
+      if (p.leaving || p.game || now < (p.gameCool || 0)) return false;
+      if (p.mode === 'wander') return true;
+      if (p.mode === 'break') { const st = p.s && p.s.status; return st !== 'waiting' && st !== 'error' && !!p.poi; }
+      return false;
+    }
+
+    matchmake(now) {
+      if (now < (this.nextMatch || 0)) return;
+      this.nextMatch = now + 2500;
+      const venues = [...(this.plan.venues || [])];
+      if (Math.random() < 0.5) venues.reverse();
+      for (const v of venues) {
+        if (v.game || now < (v.cool || 0)) continue;
+        const free = [...this.people.values()].filter((p) => this.freeForGame(p, now));
+        if (free.length < 2) return;
+        // Something already playing? A second game only sometimes.
+        if (venues.some((o) => o.game) && Math.random() < 0.5) continue;
+        free.sort((a, b) => ((a.s.status === 'idle') - (b.s.status === 'idle')) || ((a.lastGame || 0) - (b.lastGame || 0)) || Math.random() - 0.5);
+        this.startGame(v, free[0], free[1], now);
+      }
+    }
+
+    startGame(v, a, b, now) {
+      const onBreak = a.mode === 'break' || b.mode === 'break';
+      const g = { v, players: [a, b], t0: Infinity, endAt: Infinity, seed: Math.floor(Math.random() * 1e6),
+        dur: (onBreak ? rand(25, 40) : rand(45, 90)) * 1000 / breakScale() };
+      g.players.forEach((p, i) => {
+        this.release(p);
+        const q = v.pois[i];
+        if (q.taken) { const o = this.people.get(q.taken); if (o && o.poi === q) o.poi = null; }
+        q.taken = p.key; p.poi = q; p.game = g; p.until = Infinity; p.swing = 0;
+        this.goTo(p, q);
+      });
+      v.game = g;
+    }
+
+    endGame(v, now) {
+      const g = v.game;
+      v.game = null; v.cool = now + 3000;
+      g.players.forEach((p, i) => {
+        if (p.game !== g) return;
+        p.game = null; p.lastGame = now; p.gameCool = now + 8000; p.swing = 0;
+        if (p.poi === v.pois[i]) p.until = 0;
+      });
+    }
+
+    stepGames(now) {
+      for (const v of this.plan.venues || []) {
+        const g = v.game;
+        if (!g) continue;
+        const ok = g.players.every((p, i) => this.people.get(p.key) === p && p.game === g && p.poi === v.pois[i] && !p.leaving);
+        if (!ok || now >= g.endAt) { this.endGame(v, now); continue; }
+        if (g.t0 === Infinity) {
+          if (g.players.every((p) => !p.path.length)) { g.t0 = now; g.endAt = now + g.dur; }
+          else { g.ball = null; continue; }
+        }
+        this.rally(v, g, now);
+      }
+    }
+
+    // Deterministic rally: shot k goes from one hitter to the other, aimed at a
+    // pseudo-random lateral spot; the ball arcs to a bounce and on to the receiver,
+    // who shuffles over and swings exactly when it arrives.
+    rally(v, g, now) {
+      const SERVE = 0.7;
+      const e = (now - g.t0) / 1000 - SERVE;
+      const mid = (v.y0 + v.y1) / 2;
+      const ys = (i) => (i < 0 ? mid : lerp(v.y0, v.y1, hash01(g.seed * 31 + i)));
+      const [L, R] = g.players;
+      if (e < 0) {
+        L.y = R.y = mid; L.swing = -ease(Math.min(1, (e + SERVE) / SERVE)); R.swing = 0;
+        g.ball = { x: v.xA, y: mid, z: v.hz + 0.15 * Math.sin(Math.PI * (e + SERVE) / SERVE), v };
+        return;
+      }
+      const k = Math.floor(e / v.T), u = e / v.T - k;
+      const fromL = k % 2 === 0;
+      const yA = ys(k - 1), yB = ys(k);
+      const xa = fromL ? v.xA : v.xB, xb = fromL ? v.xB : v.xA;
+      const bx = lerp(xa, xb, v.bf), by = lerp(yA, yB, v.bf);
+      let x, y, z;
+      if (u < v.bf) { const f = u / v.bf; x = lerp(xa, bx, f); y = lerp(yA, by, f); z = lerp(v.hz, v.bz, f) + v.h1 * 4 * f * (1 - f); }
+      else { const f = (u - v.bf) / (1 - v.bf); x = lerp(bx, xb, f); y = lerp(by, yB, f); z = lerp(v.bz, v.hz, f) + v.h2 * 4 * f * (1 - f); }
+      g.ball = { x, y, z, v };
+      const hitter = fromL ? L : R, recv = fromL ? R : L;
+      hitter.y = yA;
+      recv.y = lerp(ys(k - 2), yB, ease(Math.min(1, u / 0.75)));
+      hitter.swing = u < 0.12 ? lerp(-1, 1, u / 0.12) : u < 0.45 ? 1 - (u - 0.12) / 0.33 : 0;
+      recv.swing = u > 0.55 ? -ease((u - 0.55) / 0.45) : 0;
+      g.rally = k;
+    }
+
+    drawGameBalls() {
+      const c = this.ctx;
+      for (const v of this.plan.venues || []) {
+        const b = v.game && v.game.ball;
+        if (!b) continue;
+        const sf = v.surf;
+        const sz = sf && b.x >= sf.x0 && b.x <= sf.x1 && b.y >= sf.y0 && b.y <= sf.y1 ? sf.z : 0;
+        const sh = this.iso(b.x, b.y, sz);
+        const r = v.kind === 'pickleball' ? 2.8 : 2.2;
+        c.fillStyle = 'rgba(0,0,0,.25)';
+        c.beginPath(); c.ellipse(sh.x, sh.y, r * 1.1, r * 0.55, 0, 0, Math.PI * 2); c.fill();
+        const p = this.iso(b.x, b.y, b.z);
+        c.fillStyle = v.kind === 'pickleball' ? '#e8f04a' : '#fff';
+        c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 0.6;
+        c.beginPath(); c.arc(p.x, p.y, r, 0, Math.PI * 2); c.fill(); c.stroke();
+      }
+    }
+
+    // ------------------------------------------------------------ wall TV
+
+    setArena(a) {
+      if (!a || !Array.isArray(a.traders)) return;
+      const sig = a.traders.map((t) => (t.series.at(-1) || []).join(',') + t.equity).join('|');
+      if (sig === this.arenaSig) return;
+      this.arenaSig = sig; this.arena = a; this.tvDirty = true;
+    }
+
+    arenaRows() {
+      const a = this.arena;
+      if (!a) return [];
+      return a.traders.map((t) => {
+        const last = t.series.at(-1);
+        const eq = typeof t.equity === 'number' ? t.equity : last ? last[1] : null;
+        const start = t.start || (t.series[0] && t.series[0][1]) || null;
+        return { name: t.name, series: t.series, eq, start, pct: eq != null && start ? (eq / start - 1) * 100 : null,
+          color: TRADER_COLORS[t.name] || '#ffd166' };
+      });
+    }
+
+    // Shared chart renderer (wall TV texture in 2D/3D and the enlarged view).
+    drawTvChart(c, w, h, big) {
+      const rows = this.arenaRows();
+      c.save();
+      c.fillStyle = '#0a0f1e'; c.fillRect(0, 0, w, h);
+      const F = '"PingFang TC","Noto Sans TC",ui-sans-serif,system-ui,sans-serif';
+      const hdr = big ? 26 : h * 0.17;
+      const pad = big ? 14 : w * 0.02;
+      const blink = Math.floor(Date.now() / 600) % 2 === 0;
+      c.textBaseline = 'middle';
+      c.fillStyle = blink ? '#ff3b3b' : '#6a1f1f';
+      c.beginPath(); c.arc(pad + hdr * 0.3, hdr * 0.55, hdr * 0.22, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#ffffff'; c.font = `800 ${hdr * 0.62}px ${F}`; c.textAlign = 'left';
+      c.fillText(big ? 'LIVE  交易競賽 · 第二輪 權益曲線' : 'LIVE 交易競賽', pad + hdr * 0.65, hdr * 0.55);
+      const a = this.arena;
+      if (a && a.updated) {
+        const tm = new Date(a.updated).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Taipei' });
+        c.textAlign = 'right'; c.fillStyle = '#8ea0c0'; c.font = `600 ${hdr * 0.5}px ${F}`;
+        c.fillText(tm, w - pad, hdr * 0.55);
+      }
+      const all = rows.flatMap((r) => r.series);
+      if (all.length < 2) {
+        c.fillStyle = '#8ea0c0'; c.textAlign = 'center'; c.font = `600 ${hdr * 0.6}px ${F}`;
+        c.fillText('等待資料…', w / 2, h / 2); c.restore(); return;
+      }
+      // layout: plot on the left, big readable numbers on the right
+      const lw = big ? 0 : w * 0.4;
+      const px0 = pad + (big ? 46 : 0), px1 = w - pad - lw, py0 = hdr + (big ? 8 : h * 0.03), py1 = h - (big ? 64 : h * 0.06);
+      const t0 = Math.min(...all.map((p) => p[0])), t1 = Math.max(...all.map((p) => p[0]));
+      let lo = Math.min(...all.map((p) => p[1])), hi = Math.max(...all.map((p) => p[1]));
+      for (const r of rows) if (r.start) { lo = Math.min(lo, r.start); hi = Math.max(hi, r.start); }
+      const m = (hi - lo) * 0.08 || 1; lo -= m; hi += m;
+      const X = (t) => px0 + (px1 - px0) * (t - t0) / Math.max(1, t1 - t0);
+      const Y = (v) => py1 - (py1 - py0) * (v - lo) / (hi - lo);
+      c.strokeStyle = 'rgba(140,160,200,.18)'; c.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) { const y = py0 + (py1 - py0) * i / 4; c.beginPath(); c.moveTo(px0, y); c.lineTo(px1, y); c.stroke(); }
+      const base = rows.find((r) => r.start);
+      if (base) {
+        c.setLineDash([big ? 6 : w * 0.012, big ? 5 : w * 0.01]); c.strokeStyle = 'rgba(255,255,255,.45)';
+        c.beginPath(); c.moveTo(px0, Y(base.start)); c.lineTo(px1, Y(base.start)); c.stroke(); c.setLineDash([]);
+      }
+      if (big) {
+        c.fillStyle = '#8ea0c0'; c.font = `500 12px ${F}`; c.textAlign = 'right';
+        for (let i = 0; i <= 4; i++) { const v = hi - (hi - lo) * i / 4; c.fillText(v.toFixed(1), px0 - 6, py0 + (py1 - py0) * i / 4); }
+        c.textAlign = 'center';
+        const fmt = (t) => new Date(t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Taipei' });
+        for (let i = 0; i <= 4; i++) { const t = t0 + (t1 - t0) * i / 4; c.fillText(fmt(t), X(t), py1 + 14); }
+      }
+      for (const r of rows) {
+        if (r.series.length < 2) continue;
+        c.strokeStyle = r.color; c.lineWidth = big ? 2.5 : Math.max(2, h * 0.022); c.lineJoin = 'round';
+        c.shadowColor = r.color; c.shadowBlur = big ? 6 : h * 0.03;
+        c.beginPath();
+        r.series.forEach(([t, v], i) => (i ? c.lineTo(X(t), Y(v)) : c.moveTo(X(t), Y(v))));
+        c.stroke(); c.shadowBlur = 0;
+        const [lt, lv] = r.series.at(-1);
+        c.fillStyle = r.color; c.beginPath(); c.arc(X(lt), Y(lv), big ? 4 : h * 0.03, 0, Math.PI * 2); c.fill();
+      }
+      const pctTxt = (r) => (r.pct == null ? '' : `${r.pct >= 0 ? '+' : ''}${r.pct.toFixed(1)}%`);
+      if (big) {
+        rows.forEach((r, i) => {
+          const x = px0 + i * (px1 - px0) / 2, y = h - 26;
+          c.fillStyle = r.color; c.fillRect(x, y - 6, 18, 4);
+          c.font = `700 15px ${F}`; c.textAlign = 'left';
+          c.fillText(`${r.name}  ${r.eq != null ? r.eq.toFixed(2) : '—'}U  ${pctTxt(r)}`, x + 26, y - 4);
+        });
+      } else {
+        const lx = w - lw + pad * 0.5, rowH = (h - hdr) / rows.length;
+        rows.forEach((r, i) => {
+          const cy = hdr + rowH * (i + 0.5);
+          c.fillStyle = r.color; c.textAlign = 'left';
+          c.font = `800 ${rowH * 0.34}px ${F}`;
+          c.fillText(r.name.replace('交易員-', 'T'), lx, cy - rowH * 0.2);
+          c.font = `800 ${rowH * 0.36}px ${F}`;
+          c.fillText(pctTxt(r), lx + lw * 0.27, cy - rowH * 0.2);
+          c.fillStyle = '#e8eefc'; c.font = `700 ${rowH * 0.3}px ${F}`;
+          c.fillText(r.eq != null ? `${r.eq.toFixed(2)} U` : '—', lx, cy + rowH * 0.22);
+        });
+      }
+      c.restore();
+    }
+
+    // Offscreen TV texture, redrawn ~1/s (LIVE dot) or when data changes.
+    tvCanvas() {
+      if (!this.tvCv) { this.tvCv = document.createElement('canvas'); this.tvCv.width = 1024; this.tvCv.height = 372; this.tvAt = 0; }
+      const now = Date.now();
+      if (this.tvDirty || now - this.tvAt > 600) {
+        this.drawTvChart(this.tvCv.getContext('2d'), this.tvCv.width, this.tvCv.height, false);
+        this.tvAt = now; this.tvDirty = false; this.tvVersion = (this.tvVersion || 0) + 1;
+      }
+      return this.tvCv;
+    }
+
+    drawTv() {
+      const tv = this.plan.tv; if (!tv) return;
+      const P = (a, b, c) => this.iso(a, b, c);
+      this.poly([P(0, tv.y0 - 0.08, tv.z0 - 0.08), P(0, tv.y1 + 0.08, tv.z0 - 0.08), P(0, tv.y1 + 0.08, tv.z1 + 0.08), P(0, tv.y0 - 0.08, tv.z1 + 0.08)], '#14161c', '#000');
+      const cv = this.tvCanvas();
+      const wpx = (tv.y1 - tv.y0) * TW / 2, hpx = (tv.z1 - tv.z0) * TH;
+      this.onWall('x0', tv.y1, tv.z1, (c) => { c.imageSmoothingEnabled = true; c.drawImage(cv, 0, 0, wpx, hpx); });
+      // screen quad corners (logical canvas coords) for hover
+      this.tvQuad = [P(0, tv.y0, tv.z1), P(0, tv.y1, tv.z1), P(0, tv.y1, tv.z0), P(0, tv.y0, tv.z0)]
+        .map((q) => ({ x: q.x * this.cam.zoom + this.cam.ox, y: q.y * this.cam.zoom + this.cam.oy }));
+    }
+
+    onTv(mx, my) {
+      const q = this.tvQuad; if (!q) return false;
+      let inside = false;
+      for (let i = 0, j = q.length - 1; i < q.length; j = i++) {
+        if ((q[i].y > my) !== (q[j].y > my) && mx < (q[j].x - q[i].x) * (my - q[i].y) / (q[j].y - q[i].y) + q[i].x) inside = !inside;
+      }
+      return inside;
+    }
+
+    drawTvBig() {
+      if (!(this.tvHover || this.tvPinned) || !this.arena) return;
+      const c = this.ctx;
+      c.save();
+      c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      const w = Math.min(this.cw - 24, 620), h = Math.round(w * 0.5);
+      const x = (this.cw - w) / 2, y = 12;
+      c.shadowColor = 'rgba(0,0,0,.45)'; c.shadowBlur = 18;
+      c.fillStyle = '#14161c'; c.fillRect(x - 6, y - 6, w + 12, h + 12);
+      c.shadowBlur = 0;
+      c.translate(x, y);
+      this.drawTvChart(c, w, h, true);
+      if (this.tvPinned) { c.fillStyle = '#8ea0c0'; c.font = '500 11px ui-sans-serif,system-ui,sans-serif'; c.textAlign = 'right'; c.fillText('點電視關閉', w - 10, h - 8); }
+      c.restore();
     }
 
     draw() {
@@ -1701,8 +1931,7 @@
         if (it.person) heads.push([it.person, this.person(it.person)]);
         else it.draw();
       }
-      this.pingPongBall();
-      this.drawPickleBall();
+      this.drawGameBalls();
       for (const [p, at] of heads) this.bubble(p, at);
 
       if (this.offDuty > 0) {
@@ -1721,6 +1950,7 @@
         x0: h.x0 * z + this.cam.ox, x1: h.x1 * z + this.cam.ox,
         y0: h.y0 * z + this.cam.oy, y1: h.y1 * z + this.cam.oy,
       }));
+      this.drawTvBig();
     }
   }
 

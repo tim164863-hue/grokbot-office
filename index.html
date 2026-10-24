@@ -364,6 +364,7 @@ function render() {
   if (office && state.loaded) {
     office.setVisible(officeMode);
     office.update(officeList);
+    if (office.setArena && state.data && state.data.arena) office.setArena(state.data.arena);
   }
   document.getElementById('idleToggle').style.display = officeMode ? 'none' : '';
   if (officeMode) {
