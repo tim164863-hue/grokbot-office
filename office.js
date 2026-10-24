@@ -10,6 +10,17 @@
   const WORKING = new Set(['thinking', 'tool', 'typing', 'waiting', 'error']);
   const MAX_WANDERERS = 7;
   const SPEED = 2.1; // tiles / second
+  // Working agents take short breaks: every BREAK_EVERY seconds (random per
+  // person) they leave the desk, spend BREAK_STAY seconds at a spot, come back.
+  // window.__breakScale (default 1) shortens both for testing.
+  const BREAK_EVERY = [60, 180];
+  const BREAK_STAY = [10, 25];
+  const BREAK_SPOTS = { coffee: 3, water: 3, fridge: 1.5, sink: 0.8, vending: 1.5, whiteboard: 2.5, printer: 2, pickleball: 2.5, bench: 0.8,
+    window: 2, read: 1.2, phone: 1.2, stool: 1.2, meeting: 1, plant: 0.8, chat: 2.5 };
+  // Fixed seats (desk index in the plan; pod 0 = 0 n / 1 s across the divider
+  // from it / 2 n beside 0 / 3 across from 2). The two traders sit face to face.
+  const SEAT = { '72e55707': 0, 'b3da2057': 1, '648a5768': 2, '3eaef92a': 3 };
+  const breakScale = () => (typeof window !== 'undefined' && window.__breakScale) || 1;
 
   const SKIN = ['#f3cfb0', '#e5b38f', '#c98d66', '#9a6646', '#6e4630', '#f7dcc7'];
   const HAIR = ['#2a2019', '#4b3020', '#8a4b2a', '#c99a5b', '#1c1c1c', '#8c8c8c', '#a33a2c', '#3d3550'];
@@ -28,8 +39,8 @@
 
   const ACT_EMOJI = {
     coffee: '☕', water: '💧', fridge: '🍎', sink: '🫧', stool: '💬', couch: '💬', beanbag: '🎧',
-    window: '☁️', read: '📖', whiteboard: '✏️', meeting: '💬', arcade: '🎮', pingpong: '🏓', plant: '🌱',
-    vending: '🥤', foosball: '⚽', phone: '📞',
+    window: '☁️', read: '📖', pickleball: '🎾', bench: '👀', whiteboard: '✏️', meeting: '💬', arcade: '🎮', pingpong: '🏓', plant: '🌱',
+    vending: '🥤', foosball: '⚽', phone: '📞', printer: '🖨️', chat: '💬',
   };
 
   function hash(str) {
@@ -233,7 +244,9 @@
       const W = OW + RW;
       const MR = 5.2;                              // meeting room depth
       const PY = 9.9;                              // pantry / lounge boundary
-      const grid = new Grid(W, D);
+      const CD = 6.0;                              // outdoor pickleball court strip in front
+      const FD = D + CD;                           // full depth incl. the court
+      const grid = new Grid(W, FD);
       const items = [];
       const pois = [];
       const desks = [];
@@ -287,6 +300,7 @@
       solid(rx, 0.2, 0.7, 0.6);
       add(OW - 2.3 + 0.3 + 0.5, () => this.printer(OW - 2.3, 0.25));
       solid(OW - 2.3, 0.25, 0.75, 0.55);
+      poi(OW - 1.95, 1.2, 'printer', 'back');
       for (const [x, y] of [[0.45, 0.45], [0.45, OD - 0.2]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
       const windows = [];
       for (let x = 1.0; x < OW - 2.6; x += 2.4) {
@@ -425,11 +439,35 @@
       add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
       add(lx - 0.2 + D - 0.6, () => this.floorLamp(lx - 0.2, D - 0.6));
 
+      // ---- pickleball court, outside the front of the office
+      const CL = 8.8, CWd = 4.0;
+      const ck = { x0: (W - CL) / 2, y0: D + 0.9, x1: (W + CL) / 2, y1: D + 0.9 + CWd };
+      ck.xm = (ck.x0 + ck.x1) / 2; ck.ym = (ck.y0 + ck.y1) / 2; ck.kz = 1.4; // non-volley zone depth
+      prop('court', { ...ck });
+      solid(ck.xm - 0.04, ck.y0 - 0.25, 0.08, CWd + 0.5, 0.06); // net + posts
+      for (let y = ck.y0 - 0.25; y < ck.y1 + 0.25 - 1e-6; y += 0.5) {
+        const y1 = Math.min(ck.y1 + 0.25, y + 0.5);
+        add(ck.xm + y1 + 0.02, () => this.pickleNet(ck, y, y1));
+      }
+      for (const [side, sx] of [['L', ck.x0 + 1.0], ['R', ck.x1 - 1.0]]) {
+        poi(sx, ck.ym - 0.9, 'pickleball', 'side', { pair: 'pk', side });
+        poi(sx, ck.ym + 0.9, 'pickleball', 'side', { pair: 'pk', side });
+      }
+      const bnx = ck.xm - 1.0, bny = ck.y1 + 0.45;
+      add(bnx + 1.0 + bny + 0.2, () => this.bench(bnx, bny));
+      prop('bench', { x: bnx, y: bny, w: 2.0, d: 0.4 });
+      solid(bnx, bny, 2.0, 0.4, 0.05);
+      poi(bnx + 0.5, bny + 0.2, 'bench', 'back', { sit: 0.4 });
+      poi(bnx + 1.5, bny + 0.2, 'bench', 'back', { sit: 0.4 });
+      for (const [x, y] of [[0.6, FD - 0.6], [W - 0.6, D + 0.7], [W - 0.6, FD - 0.6]]) {
+        add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4);
+      }
+
       const posters = [
         { y: 2.2, color: '#c96442', text: 'SHIP IT' },
         { y: 4.6, color: '#10a37f', text: 'TESTS ✓' },
       ];
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, door: { x: 0.4, y: D - 1.2 } };
+      return { W, D, FD, ck, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, door: { x: 0.4, y: D - 1.2 } };
     }
 
     glassX(add, x, y, d) {
@@ -471,9 +509,19 @@
       // Fill the desks that face us first so more faces and screens show.
       const desks = this.plan.desks;
       const order = desks.map((d, i) => i).sort((a, b) => (desks[a].side === 's') - (desks[b].side === 's') || a - b);
+      const fixed = new Set(Object.values(SEAT).filter((i) => i < desks.length));
+      for (const s of working) {
+        const want = SEAT[s.id];
+        if (want == null || want >= desks.length || this.deskOf.get(s.key) === want) continue;
+        // move whoever else is on the reserved desk
+        for (const [k, i] of this.deskOf) if (i === want) { this.deskOf.delete(k); used.delete(i); }
+        if (this.deskOf.has(s.key)) used.delete(this.deskOf.get(s.key));
+        this.deskOf.set(s.key, want);
+        used.add(want);
+      }
       for (const s of [...working].sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0))) {
         if (this.deskOf.has(s.key)) continue;
-        const i = order.find((n) => !used.has(n));
+        const i = order.find((n) => !used.has(n) && !fixed.has(n)) ?? order.find((n) => !used.has(n));
         if (i == null) continue;
         this.deskOf.set(s.key, i);
         used.add(i);
@@ -490,12 +538,15 @@
         p.s = s;
         p.leaving = false;
         if (isWorker) {
-          this.release(p);
           const desk = desks[this.deskOf.get(s.key)];
-          if (p.desk !== desk || p.mode !== 'work') { p.desk = desk; this.goTo(p, desk.seat); }
-          p.mode = 'work';
+          const onBreak = p.mode === 'break' && p.desk === desk && !(s.status === 'waiting' || s.status === 'error');
+          if (!onBreak) {
+            this.release(p);
+            if (p.desk !== desk || p.mode !== 'work') { p.desk = desk; this.goTo(p, desk.seat); }
+            p.mode = 'work';
+          }
         } else {
-          if (p.mode !== 'wander') { p.mode = 'wander'; p.desk = null; p.poi = null; p.until = 0; }
+          if (p.mode !== 'wander') { this.release(p); p.mode = 'wander'; p.desk = null; p.poi = null; p.until = 0; }
           // Someone started working at the desk this one was napping on.
           if (p.napDesk && takenDesks.has(p.napDesk)) { this.release(p); p.path = []; }
         }
@@ -572,6 +623,54 @@
       this.goTo(p, choice);
     }
 
+    // Working agents: sit and work, now and then stretch their legs.
+    workBreaks(p, now) {
+      if (p.path.length || !p.desk) return;
+      const st = p.s && p.s.status;
+      const busy = st === 'waiting' || st === 'error';
+      if (p.mode === 'work') {
+        if (!p.nextBreak) p.nextBreak = now + rand(BREAK_EVERY[0], BREAK_EVERY[1]) * 1000 / breakScale();
+        if (!busy && now > p.nextBreak) this.startBreak(p, now);
+        return;
+      }
+      // mode 'break'
+      if (p.poi && p.until === Infinity) p.until = now + p.stay;
+      if (now >= p.until || busy || !p.poi) {
+        this.release(p);
+        p.mode = 'work';
+        p.nextBreak = 0;
+        this.goTo(p, p.desk.seat);
+      }
+    }
+
+    startBreak(p, now) {
+      const plan = this.plan;
+      const weighted = [];
+      for (const q of plan.pois) {
+        const w = BREAK_SPOTS[q.act];
+        if (!w || q.taken) continue;
+        weighted.push([q, w]);
+      }
+      // drop by a colleague's desk for a chat
+      for (const o of this.people.values()) {
+        if (o === p || o.mode !== 'work' || !o.desk || o.path.length) continue;
+        const d = o.desk;
+        const x = d.seat.x + (d.side === 'n' ? 0.6 : -0.6), y = d.seat.y + (d.side === 'n' ? -0.15 : 0.15);
+        if (plan.grid.blocked(x, y)) continue;
+        weighted.push([{ x, y, act: 'chat', face: 'front', sit: 0, tx: d.seat.x, ty: d.seat.y }, BREAK_SPOTS.chat / 2]);
+      }
+      if (!weighted.length) { p.nextBreak = now + 30_000; return; }
+      let r = Math.random() * weighted.reduce((a, [, w]) => a + w, 0);
+      let choice = weighted[0][0];
+      for (const [q, w] of weighted) { r -= w; if (r <= 0) { choice = q; break; } }
+      choice.taken = p.key;
+      p.poi = choice;
+      p.mode = 'break';
+      p.until = Infinity; // set on arrival
+      p.stay = rand(BREAK_STAY[0], BREAK_STAY[1]) * 1000 / breakScale();
+      this.goTo(p, choice);
+    }
+
     setVisible(v) { this.visible = v; if (v) this.resize(); }
 
     // ------------------------------------------------------------ camera / input
@@ -589,7 +688,8 @@
     }
 
     fitCamera() {
-      const { W, D } = this.plan;
+      const { W } = this.plan;
+      const D = this.plan.FD || this.plan.D;
       const left = this.iso(0, D, 0).x, right = this.iso(W, 0, 0).x;
       const top = this.iso(0, 0, WALL_H).y - 20, bottom = this.iso(W, D, 0).y + 10;
       const zoom = Math.min(this.cw / (right - left + 30), this.ch / (bottom - top + 30), 2);
@@ -704,6 +804,8 @@
       this.poly([P(OW + 0.5, PY + 0.8), P(OW + 4.1, PY + 0.8), P(OW + 4.1, D - 0.6), P(OW + 0.5, D - 0.6)], null, pal.rugEdge);
       this.poly([P(pp.x0 - 0.6, pp.y - 1.4), P(pp.x1 + 0.6, pp.y - 1.4), P(pp.x1 + 0.6, pp.y + 1.3), P(pp.x0 - 0.6, pp.y + 1.3)], pal.mat);
 
+      this.drawCourt();
+
       // walls
       this.poly([P(0, 0, 0), P(W, 0, 0), P(W, 0, WALL_H), P(0, 0, WALL_H)], pal.wallL);
       this.poly([P(0, 0, 0), P(0, D, 0), P(0, D, WALL_H), P(0, 0, WALL_H)], pal.wallR);
@@ -765,6 +867,85 @@
       this.poly([P(0, dy - 0.52, 0), P(0, dy + 0.52, 0), P(0, dy + 0.52, 1.72), P(0, dy - 0.52, 1.72)], this.shade(pal.deskL, -10));
       this.onWall('x0', dy - 0.25, 0.85, (c) => { c.fillStyle = '#d8c48a'; c.beginPath(); c.arc(0, 0, 1.8, 0, Math.PI * 2); c.fill(); });
       this.poly([P(0.05, dy - 0.6), P(0.9, dy - 0.6), P(0.9, dy + 0.6), P(0.05, dy + 0.6)], pal.dark ? '#5a3b2e' : '#b9654a');
+    }
+
+    // Outdoor strip in front of the office with a pickleball court.
+    drawCourt() {
+      const { W, D, FD, ck } = this.plan;
+      if (!ck) return;
+      const pal = this.pal, dk = pal.dark;
+      const P = (x, y, z = 0) => this.iso(x, y, z);
+      const quad = (x0, y0, x1, y1, fill, z = 0) => this.poly([P(x0, y0, z), P(x1, y0, z), P(x1, y1, z), P(x0, y1, z)], fill);
+      // grass with mowing stripes, and a paved step out of the office
+      for (let x = 0; x < W; x += 1) quad(x, D, Math.min(W, x + 1), FD, (Math.floor(x) % 2) ? (dk ? '#2f4a33' : '#8cc47a') : (dk ? '#2a4430' : '#81bb70'));
+      quad(0, D, W, D + 0.35, dk ? '#5a5650' : '#cfc8bb');
+      // court: green surround, blue playing area, white lines, kitchen zones
+      quad(ck.x0 - 0.5, ck.y0 - 0.45, ck.x1 + 0.5, ck.y1 + 0.35, dk ? '#2e5a4a' : '#4f9a78');
+      quad(ck.x0, ck.y0, ck.x1, ck.y1, dk ? '#2a4f7a' : '#3f7fc4');
+      quad(ck.xm - ck.kz, ck.y0, ck.xm + ck.kz, ck.y1, dk ? '#335c88' : '#5a95d2');
+      const L = '#f4f4f0', lw = 0.05;
+      quad(ck.x0, ck.y0, ck.x1, ck.y0 + lw, L); quad(ck.x0, ck.y1 - lw, ck.x1, ck.y1, L);
+      quad(ck.x0, ck.y0, ck.x0 + lw, ck.y1, L); quad(ck.x1 - lw, ck.y0, ck.x1, ck.y1, L);
+      quad(ck.xm - ck.kz, ck.y0, ck.xm - ck.kz + lw, ck.y1, L); quad(ck.xm + ck.kz - lw, ck.y0, ck.xm + ck.kz, ck.y1, L);
+      quad(ck.x0, ck.ym - lw / 2, ck.xm - ck.kz, ck.ym + lw / 2, L); quad(ck.xm + ck.kz, ck.ym - lw / 2, ck.x1, ck.ym + lw / 2, L);
+      // net shadow
+      this.poly([P(ck.xm, ck.y0 - 0.25), P(ck.xm + 0.25, ck.y0 - 0.25), P(ck.xm + 0.25, ck.y1 + 0.25), P(ck.xm, ck.y1 + 0.25)], 'rgba(0,0,0,.12)');
+      const sign = P(ck.x0 + 0.1, ck.y0 - 0.2);
+      const c = this.ctx;
+      c.save(); c.font = '800 9px ui-sans-serif, system-ui, "PingFang TC", sans-serif'; c.fillStyle = 'rgba(255,255,255,.85)';
+      c.fillText('PICKLEBALL 匹克球場', sign.x - 6, sign.y + 2); c.restore();
+    }
+
+    pickleNet(ck, y0, y1) {
+      const P = (x, y, z) => this.iso(x, y, z);
+      const x = ck.xm, H = 0.42;
+      this.poly([P(x, y0, 0.08), P(x, y1, 0.08), P(x, y1, H), P(x, y0, H)], 'rgba(30,30,34,.45)', 'rgba(20,20,20,.35)');
+      this.poly([P(x, y0, H - 0.05), P(x, y1, H - 0.05), P(x, y1, H), P(x, y0, H)], '#f4f4f0');
+      if (y0 <= ck.y0 - 0.2) this.box(x - 0.03, y0, 0, 0.06, 0.06, H + 0.04, '#555', '#444', '#333');
+      if (y1 >= ck.y1 + 0.2) this.box(x - 0.03, y1 - 0.06, 0, 0.06, 0.06, H + 0.04, '#555', '#444', '#333');
+    }
+
+    bench(x, y) {
+      const wd = this.pal.dark ? '#6e533b' : '#b08458';
+      for (const lx of [0.1, 1.8]) this.box(x + lx, y + 0.1, 0, 0.1, 0.2, 0.38, '#555', '#444', '#333');
+      this.box(x, y, 0.38, 2.0, 0.4, 0.06, this.shade(wd, 15), wd, this.shade(wd, -15));
+      this.box(x, y + 0.36, 0.44, 2.0, 0.05, 0.35, this.shade(wd, 15), wd, this.shade(wd, -15));
+    }
+
+    // Who is playing pickleball: one player on each side is enough for a rally.
+    picklePlayers() {
+      const ck = this.plan.ck;
+      if (!ck) return null;
+      const on = this.plan.pois.filter((q) => q.pair === 'pk' && q.taken)
+        .map((q) => [q, this.people.get(q.taken)])
+        .filter(([q, p]) => p && p.poi === q && !p.path.length);
+      const L = on.find(([q]) => q.side === 'L'), R = on.find(([q]) => q.side === 'R');
+      return L && R ? [L[1], R[1]] : null;
+    }
+
+    // Ball position for the rally: arcs over the net between the two players.
+    pickleBallPos() {
+      const pl = this.picklePlayers();
+      if (!pl) return null;
+      const [a, b] = pl;
+      const k = (this.t / 1300) % 2;
+      const f = k < 1 ? k : 2 - k;
+      const x = a.x + 0.35 + f * (b.x - a.x - 0.7);
+      const y = a.y + f * (b.y - a.y);
+      const z = 0.55 + Math.sin(f * Math.PI) * 0.75;
+      return { x, y, z };
+    }
+
+    drawPickleBall() {
+      const b = this.pickleBallPos();
+      if (!b) return;
+      const c = this.ctx;
+      const sh = this.iso(b.x, b.y, 0);
+      c.fillStyle = 'rgba(0,0,0,.22)';
+      c.beginPath(); c.ellipse(sh.x, sh.y, 2.6, 1.2, 0, 0, Math.PI * 2); c.fill();
+      const p = this.iso(b.x, b.y, b.z);
+      c.fillStyle = '#e8f04a';
+      c.beginPath(); c.arc(p.x, p.y, 2.4, 0, Math.PI * 2); c.fill();
     }
 
     // ------------------------------------------------------------ furniture
@@ -1121,7 +1302,7 @@
         if (s.status === 'waiting' || s.status === 'error') return { pose: 'stand', face, act: 'wave', sitZ: 0 };
         return { pose: 'sit', face, act: s.status === 'tool' || s.status === 'typing' ? 'type' : 'think', sitZ: 0.34 };
       }
-      if (p.mode === 'wander' && p.poi) {
+      if ((p.mode === 'wander' || p.mode === 'break') && p.poi) {
         const q = p.poi;
         return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act: q.act, sitZ: q.sit || 0 };
       }
@@ -1153,6 +1334,7 @@
       let x = b.x;
       const y = b.y - bob;
       if (st.act === 'pingpong') x += Math.sin(t * 7 + p.phase) * 4;
+      if (st.act === 'pickleball') x += Math.sin(t * 2.4 + p.phase) * 5;
       if (st.act === 'foosball') x += Math.sin(t * 5 + p.phase) * 1.5;
       const sc = s.subagent ? 0.8 : 1;
       c.save();
@@ -1219,6 +1401,15 @@
           c.fillRect(6, hip - 14, 3, 9);
           c.fillStyle = '#c0392b';
           c.beginPath(); c.arc(10, hip - 16, 4, 0, Math.PI * 2); c.fill();
+          break;
+        }
+        case 'pickleball': {
+          const sw = Math.sin(t * 4.8 + p.phase);
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(6, hip - 14 + sw * 2, 3, 9);
+          c.fillStyle = p.poi && p.poi.side === 'L' ? '#e0763a' : '#7a4fd0';
+          c.fillRect(8, hip - 21 + sw * 2, 5, 7);
+          c.fillStyle = '#333'; c.fillRect(9.5, hip - 15 + sw * 2, 2, 3);
           break;
         }
         case 'foosball': {
@@ -1307,7 +1498,7 @@
       };
 
       let top = y;
-      if (p.mode === 'work' && !p.path.length) {
+      if ((p.mode === 'work' && !p.path.length) || p.mode === 'break') {
         const col = STATUS_COLOR[st] || '#888';
         if (st === 'thinking') {
           c.fillStyle = pal.bubble;
@@ -1375,7 +1566,7 @@
 
       const hover = this.hoverKey === p.key;
       if (!s.subagent || hover) {
-        pill(this.label(s), pal.text, pal.tagBg, top - 11, p.mode === 'work' || hover ? 1 : 0.7);
+        pill(this.label(s), pal.text, pal.tagBg, top - 11, p.mode === 'work' || p.mode === 'break' || hover ? 1 : 0.7);
       }
       c.restore();
     }
@@ -1464,6 +1655,8 @@
         if (p.mode === 'wander') {
           if (p.poi && !p.path.length && p.until === Infinity) p.until = wall + p.stay;
           this.wander(p, wall);
+        } else if (p.mode === 'work' || p.mode === 'break') {
+          this.workBreaks(p, wall);
         }
         if (p.path.length) {
           const n = p.path[0];
@@ -1509,6 +1702,7 @@
         else it.draw();
       }
       this.pingPongBall();
+      this.drawPickleBall();
       for (const [p, at] of heads) this.bubble(p, at);
 
       if (this.offDuty > 0) {
